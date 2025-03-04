@@ -1,0 +1,353 @@
+#include<iostream>
+#include<string>
+#include<cstring>
+#include<windows.h>
+using namespace std;
+
+
+
+
+class Artist {
+	int artistid;
+	string name;
+	int numartworks;
+	int* artworkID;
+public:
+	Artist() {
+		artistid = 0;
+		name = "0";
+		numartworks = 0;
+		artworkID = new int[0];
+
+	}
+	void idsetter(int id) {
+		artistid = id;
+	}
+	void namesetter() {
+		cin.ignore();
+		cout << "Enter artist name : " << endl;
+		getline(cin, name);
+	}
+	void numartsetter() {
+		cout << "Enter number of artworks for artist " << name << ":\n";
+		cin >> numartworks;
+	}
+	void inputArtworks() {
+		cout << "Enter " << numartworks << " Artwork IDs for " << name << ": \n";
+		for (int i = 0; i < numartworks; i++) {
+			cin >> artworkID[i];
+		}
+		cout << endl;
+	}
+	int idgetter() {
+		return artistid;
+	}
+
+	string namegetter() {
+		return name;
+	}
+
+	int numartgetter() {
+		return numartworks;
+	}
+
+	int workgetter(int p) {
+			return artworkID[p];
+	}
+	~Artist() {
+		delete[] artworkID;
+	}
+};
+
+
+class artWork {
+	int artWorkId;
+	string title;
+	string artistName;
+	int yearCreated;
+
+public:
+
+	artWork() {                                       //Constructor Created
+		artWorkId = 0;
+		yearCreated = 0;
+		title = "0";
+		artistName = "0";
+	}
+
+	void Idsetter(int id) {
+		artWorkId = id;
+	}
+
+    void titlesetter() {
+		cin.ignore();
+		cout << "Enter title of artwork: ";
+		getline(cin, title);
+	}
+
+	void namesetter() {
+		cout << "Enter name of artist: ";
+		getline(cin, artistName);
+	}
+
+	void Yearsetter() {
+		int year;
+		cout << "Enter year of creation\t:";
+		cin >> year;
+		cout << endl;
+		yearCreated = year;
+	}
+
+	int Idgetter() {
+		return artWorkId;
+	}
+
+	string titlegetter() {
+		return title;
+	}
+
+	string namegetter() {
+		return artistName;
+	}
+
+	int Yeargetter() {
+		return yearCreated;
+	}
+	
+	void Print() {
+		cout << "Artwork ID: " << Idgetter() << " | Year: " << Yeargetter() << endl;
+		cout << "Artist: " << namegetter() << " | Title: " << titlegetter() << endl << endl;
+	}
+};
+
+
+void creatingGallery(artWork**& arr, int arthalls, int artworks) {
+
+	arr = new artWork* [arthalls];
+	for (int i = 0; i < arthalls; i++) {
+	    arr[i] =new artWork[artworks];
+	}
+
+}
+
+void searchfunction(Artist* wrt, int artists) {
+	string name;
+	cout << "Enter the artist name : " << endl;
+	cin >> name;
+	for (int i = 0; i < artists; i++) {
+		if (wrt[i].namegetter() == name) {
+			cout << "Artwork ID/s of the artist are " << endl;
+			for (int j = 0; j < wrt[i].numartgetter(); j++) {
+				cout << wrt[i].workgetter(j) << endl;
+			}
+		}
+	}
+}
+
+void fillingGallery(artWork** arr, int arthalls, int artworks) {
+
+	int h = 1;
+	for (int i = 0; i < arthalls; i++) {
+		for (int j = 0; j < artworks; j++) {
+			cout << "\t\t\tEnter input for artwork number " << h << " " << endl;
+			arr[i][j].Idsetter(i+((j+3)*178));
+			arr[i][j].titlesetter();
+			arr[i][j].namesetter();
+			arr[i][j].Yearsetter();
+			h++;
+		}
+	}
+
+}
+
+void fillingArtistArray(Artist* wrt, int artists) {
+	
+	for (int i = 0; i < artists; i++) {
+		cout << "\t\t\tEnter info of artist " << i + 1 << endl;
+		wrt[i].namesetter();
+		wrt[i].idsetter(i + 1);
+		wrt[i].numartsetter();
+		wrt[i].inputArtworks();
+	}
+}
+
+void displayGallery(artWork** arr, int arthalls, int artworks) {
+
+	for (int i = 0; i < arthalls; i++) {
+		for (int j = 0; j < artworks; j++) {
+			arr[i][j].Print();
+		}
+		cout << endl << endl;
+	}
+	cout << endl;
+
+}
+
+
+void deleteArray(artWork**& arr, int arthalls, Artist*& wrt, int** exh, int& exhsize) {
+	for (int i = 0; i < arthalls; i++) {
+		delete[] arr[i]; 
+	}
+	delete[] arr; 
+	arr = 0;  
+	delete[] wrt;
+	wrt = 0;  
+	for (int i = 0; i < exhsize; i++) {
+		delete[] exh[i];
+	}
+	delete[] exh;
+	exh = 0;
+}
+
+void createExhibit(int exhsize, int**& exh) {
+	int h = 0;
+	for (int i = 0; i < exhsize; i++) {
+		h = 0;
+		cout << "Enter number of artworks for exhibition " << i + 1 << " :\n";
+		cin >> h;
+		exh[i] = new int[h+1];
+		for (int j = 0; j < h; j++) {
+			cout << "Enter ID of artwork number " << j + 1 << " :\n";
+			cin >> exh[i][j];
+		}
+		exh[i][h] = 0;
+	}
+	
+}
+
+void addExhibit(int**& exh, int& exhsize) {
+	exhsize++;  
+	int** temp = new int* [exhsize];
+	for (int i = 0; i < exhsize - 1; i++) {
+		temp[i] = exh[i];
+	}	
+	delete[] exh;
+	exh = temp;
+	int var;
+	cout << "Enter number of artworks in new exhibition: ";
+	cin >> var;
+	exh[exhsize - 1] = new int[var + 1];  
+	for (int i = 0; i < var; i++) {
+		cout << "Enter ID of artwork number " << i + 1 << " in new exhibition: ";
+		cin >> exh[exhsize - 1][i];
+	}
+	exh[exhsize - 1][var] = 0;  
+	cout << "Exhibition successfully added." << endl;
+}
+
+
+void addArtwork(int**& exh, int exhsize) {
+	int row;
+	cout << "Enter the exhibit number in which you want to add new artwork: ";
+	cin >> row;
+	int res;
+	cout << "Enter ID of artwork you want to add: ";
+	cin >> res;
+	int count = 0;
+	while (exh[row-1][count] != 0) { 
+		count++;
+	}
+	int* temp = new int[count + 2]; 
+	for (int i = 0; i < count; i++) {
+		temp[i] = exh[row-1][i];
+	}
+	temp[count] = res;
+	temp[count + 1] = 0;
+	delete[] exh[row-1];
+	exh[row-1] = temp;
+	cout << "Artwork successfully added." << endl << endl;
+}
+
+
+void removeArtwork(int** exh) {
+	int non;
+	cout << "Enter number of exhibit from which you want to remove artwork :" << endl;
+	cin >> non;
+	int pre;
+	cout << "Enter ID of artwork you want to remove : " << endl;
+	cin >> pre;
+	for (int i = 0; exh[non - 1][i] != 0; i++) {
+		if (exh[non - 1][i] == pre) {
+			exh[non - 1][i] = -1;
+		}
+	}
+	cout << "Artwork successfully removed." << endl << endl;
+}
+
+
+void displayingAllExhibitions(int& exhsize, int** exh, artWork**& arr, int arthalls, int artworks) {
+	cout << "Displaying all exhibitions." << endl << endl;
+	Sleep(1000);
+	for(int i = 0; i < exhsize;i++){
+		cout << "\t\t\t <----Artworks in exhibit " << i + 1 << " are ----> \n";
+		for (int j = 0; exh[i][j] != 0; j++) {
+			if (exh[i][j] == -1) {
+				continue;
+			}
+			for (int k = 0; k < arthalls; k++) {
+				for (int l = 0; l < artworks; l++) {
+					if (exh[i][j] == arr[k][l].Idgetter()) {
+						arr[k][l].Print();
+					}
+				}
+			}
+			cout << endl<<endl;
+		}
+	}
+}
+
+int main() {
+	int arthalls, artworks;                                                                  // wrt is the array consisting of artist objects
+	cout << "Enter number of arthalls\t:";                                                   // arr is 2d array consisting of artworks in entire gallery
+	cin >> arthalls;                                                                         // exh is the exhibition array
+	cout << "Enter number of artworks per hall\t:";
+	cin >> artworks;
+	artWork** arr=0;
+	creatingGallery(arr, arthalls, artworks);
+	fillingGallery(arr, arthalls, artworks);
+	displayGallery(arr, arthalls, artworks);
+	int artists;
+	cout << "Enter number of artists : " << endl;
+	cin >> artists;
+	Artist* wrt = new Artist[artists];
+	fillingArtistArray(wrt, artists);
+	cout << "\t\t\t =============== Exhibition Making ================ " << endl;
+	int exhsize;
+	cout << "Enter number of exhibitions you want to make : " << endl;
+	cin >> exhsize;
+	int** exh = new int*[exhsize];
+	createExhibit(exhsize, exh);
+	int choice;
+	while (true) {
+		int choice;
+		cout << "\t\t\t=============== MENU ==============" << endl;
+		cout << "Enter 1 to search for an artist. " << endl;
+		cout << "Enter 2 to create new exhibition." << endl;
+		cout << "Enter 3 to add an artwork to a exhibition." << endl;
+		cout << "Enter 4 to remove an artwork from a exhibition." << endl;
+		cout << "Enter 5 to display all exhibitions." << endl;
+		cout << "Enter 6 to end program." << endl;
+		cin >> choice;
+		if (choice == 1) {
+			searchfunction(wrt, artists);
+		}
+		else if (choice == 2) {
+			addExhibit(exh, exhsize);
+		}
+		else if (choice == 3) {
+			addArtwork(exh, exhsize);
+		}
+		else if (choice == 4) {
+			removeArtwork(exh);
+		}
+		else if (choice == 5) {
+			displayingAllExhibitions(exhsize, exh, arr, arthalls, artworks);
+		}
+		else if (choice == 6) {
+			cout << "Thank you for using our program." << endl;
+			break;
+		}
+	}
+	deleteArray(arr, arthalls, wrt, exh, exhsize);
+	return 0;
+}
