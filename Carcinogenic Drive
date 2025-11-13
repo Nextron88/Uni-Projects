@@ -1,0 +1,979 @@
+BITS 16
+ORG 0x100
+
+section .data
+    scroll_offset: dw 0
+    player_lane: dw 1
+    
+    lane_positions:
+        dw 80
+        dw 143
+        dw 207
+    
+    enemy_lane: dw 0
+    enemy_y: dw 0
+    previous_enemy_y: dw -1         ; Initialize to -1 (impossible value)
+    previous_enemy_lane: dw 0       ; Track previous lane for lane changes
+
+section .text
+start:
+    mov ah, 0Fh
+    int 10h
+    push ax
+    
+    mov ah, 0
+    mov al, 13h
+    int 10h
+    
+    mov ah, 01h
+    mov ch, 32
+    int 10h
+    
+    call initialize_enemy_car
+    call draw_static_background
+    
+main_loop:
+    mov ah, 01h
+    int 16h
+    jz no_key
+    
+    mov ah, 0
+    int 16h
+    
+    cmp ah, 01h
+    je exit_game
+    
+    cmp ah, 4Bh
+    je move_left
+    
+    cmp ah, 4Dh
+    je move_right
+    
+    jmp no_key
+
+move_left:
+    mov ax, [player_lane]
+    cmp ax, 0
+    je no_key
+    
+    call erase_car_at_lane
+    
+    mov ax, [player_lane]
+    dec ax
+    mov [player_lane], ax
+    
+    call draw_player_car
+    
+    jmp no_key
+
+move_right:
+    mov ax, [player_lane]
+    cmp ax, 2
+    je no_key
+    
+    call erase_car_at_lane
+    
+    mov ax, [player_lane]
+    inc ax
+    mov [player_lane], ax
+    
+    call draw_player_car
+    
+    jmp no_key
+
+no_key:
+    mov ax, [scroll_offset]
+    add ax, 6
+    cmp ax, 40
+    jl .no_reset_scroll
+    xor ax, ax
+.no_reset_scroll:
+    mov [scroll_offset], ax
+
+    ; --- FIX: DRAW BACKGROUND/SCROLLING FIRST ---
+    ; This draws the new background, which "erases" most of the old frame
+    call draw_scrolling_elements
+    
+    ; Update enemy Y
+    mov ax, [enemy_y]
+    add ax, 3
+    
+    ; Check if enemy went past bottom (Y > 200) - needs erasing
+    cmp ax, 200
+    jl .enemy_still_visible
+    
+    ; Enemy is OFF-SCREEN - ERASE it before resetting
+    mov ax, [enemy_y]
+    call erase_enemy_at_y         ; Now this just "patches" the road
+    
+    ; Reset to top
+    xor ax, ax
+    mov [enemy_y], ax
+    mov [previous_enemy_y], ax
+    mov dx, [enemy_lane]  ; Update previous lane
+	mov [previous_enemy_lane],dx
+    call randomize_enemy_lane
+    
+    jmp .enemy_done
+    
+.enemy_still_visible:
+    ; Check if enemy CHANGED lane (lane switch)
+    mov bx, [enemy_lane]
+    mov cx, [previous_enemy_lane]
+    cmp bx, cx
+    jne .enemy_lane_changed
+    
+    ; Lane didn't change - only check if Y position warrants redraw
+    mov [enemy_y], ax
+    
+    ; Y changed - erase old and update
+    mov ax, [previous_enemy_y]
+    call erase_enemy_at_y         ; This "patches" the spot the car just left
+    
+    mov ax, [enemy_y]
+    mov [previous_enemy_y], ax
+    
+    jmp .skip_enemy_erase
+    
+.enemy_lane_changed:
+    ; Lane changed - must erase old position completely
+    mov ax, [previous_enemy_y]
+    call erase_enemy_at_y         ; This "patches" the spot the car just left
+    
+    mov [enemy_y], ax
+    mov [previous_enemy_y], ax
+    mov dx, [enemy_lane]
+	mov [previous_enemy_lane],dx
+    
+.skip_enemy_erase:
+.enemy_done:
+    
+    ; call draw_scrolling_elements ; <--- MOVED TO THE TOP
+    call draw_enemy_car
+    call draw_player_car
+    call wait_for_retrace
+    
+    jmp main_loop
+
+exit_game:
+    mov ah, 01h
+    mov ch, 6
+    mov cl, 7
+    int 10h
+    
+    pop ax
+    and al, 0x7F
+    mov ah, 0
+    int 10h
+    
+    mov ah, 4Ch
+    int 21h
+
+;--------------------------------------
+initialize_enemy_car:
+    push ax
+    push bx
+    push dx
+    
+    mov ax, 0
+    mov [enemy_y], ax
+    mov [previous_enemy_y], ax
+    
+    call randomize_enemy_lane
+    mov ax, [enemy_lane]
+    mov [previous_enemy_lane], ax
+    
+    pop dx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+randomize_enemy_lane:
+    push ax
+    push bx
+    push dx
+    
+    mov ax, 0040h
+    mov es, ax
+    mov ax, [es:006Ch]
+    
+    xor dx, dx
+    mov bx, 3
+    div bx
+    mov [enemy_lane], dx
+    
+    pop dx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+; ERASE enemy car at Y position
+;--------------------------------------
+erase_enemy_at_y:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    mov dx, ax
+    
+    cmp dx, 0
+    jl .erase_done
+    cmp dx, 200
+    jge .erase_done
+    
+    mov ax, [previous_enemy_lane]    ; Use PREVIOUS lane for erasing old position
+    shl ax, 1
+    mov bx, ax
+    mov bx, [lane_positions + bx]
+    
+    mov cx, 0
+.erase_row:
+    cmp cx, blue_car_large_height
+    jge .erase_done
+    
+    mov ax, bx
+    mov si, 0
+.erase_col:
+    cmp si, blue_car_large_width
+    jge .next_erase_row
+    
+    push cx
+    push dx
+    push si
+    push ax
+    
+    mov cx, ax
+    mov ah, 0Ch
+    mov al, 8
+    mov bh, 0
+    int 10h
+    
+    pop ax
+    pop si
+    pop dx
+    pop cx
+    
+    inc ax
+    inc si
+    jmp .erase_col
+    
+.next_erase_row:
+    inc dx
+    inc cx
+    jmp .erase_row
+    
+.erase_done:
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+draw_static_background:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    call draw_grass
+    call draw_road
+    call draw_left_trees
+    call draw_right_trees
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+draw_scrolling_elements:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    call draw_left_barrier_scroll
+    call draw_right_barrier_scroll
+    call draw_lanes_scroll
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+draw_grass:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    mov dx, 0
+.grass_row:
+    mov cx, 0
+.grass_col:
+    mov ah, 0Ch
+    mov al, 2
+    mov bh, 0
+    int 10h
+    
+    inc cx
+    cmp cx, 320
+    jl .grass_col
+    
+    inc dx
+    cmp dx, 200
+    jl .grass_row
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+draw_road:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    mov dx, 0
+.road_row:
+    mov cx, 50
+.road_col:
+    mov ah, 0Ch
+    mov al, 8
+    mov bh, 0
+    int 10h
+    
+    inc cx
+    cmp cx, 270
+    jl .road_col
+    
+    inc dx
+    cmp dx, 200
+    jl .road_row
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+draw_left_barrier_scroll:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    
+    mov dx, 0
+.left_bar_row:
+    mov ax, dx
+    sub ax, [scroll_offset]
+    
+.wrap_check:
+    cmp ax, 0
+    jge .wrap_done
+    add ax, 20
+    jmp .wrap_check
+.wrap_done:
+    
+    cmp ax, 20
+    jl .in_range
+    sub ax, 20
+    jmp .wrap_done
+.in_range:
+    
+    cmp ax, 10
+    jl .left_red
+    mov al, 15
+    jmp .left_draw
+.left_red:
+    mov al, 4
+    
+.left_draw:
+    mov si, 30
+.left_bar_col:
+    push cx
+    push dx
+    mov cx, si
+    mov ah, 0Ch
+    mov bh, 0
+    int 10h
+    pop dx
+    pop cx
+    
+    inc si
+    cmp si, 50
+    jl .left_bar_col
+    
+    inc dx
+    cmp dx, 200
+    jl .left_bar_row
+    
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+draw_right_barrier_scroll:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    
+    mov dx, 0
+.right_bar_row:
+    mov ax, dx
+    sub ax, [scroll_offset]
+    
+.wrap_check:
+    cmp ax, 0
+    jge .wrap_done
+    add ax, 20
+    jmp .wrap_check
+.wrap_done:
+    
+    cmp ax, 20
+    jl .in_range
+    sub ax, 20
+    jmp .wrap_done
+.in_range:
+    
+    cmp ax, 10
+    jl .right_red
+    mov al, 15
+    jmp .right_draw
+.right_red:
+    mov al, 4
+    
+.right_draw:
+    mov si, 270
+.right_bar_col:
+    push cx
+    push dx
+    mov cx, si
+    mov ah, 0Ch
+    mov bh, 0
+    int 10h
+    pop dx
+    pop cx
+    
+    inc si
+    cmp si, 290
+    jl .right_bar_col
+    
+    inc dx
+    cmp dx, 200
+    jl .right_bar_row
+    
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+draw_lanes_scroll:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    mov cx, 118
+    call draw_thick_dashed_line_scroll
+    
+    mov cx, 198
+    call draw_thick_dashed_line_scroll
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+draw_thick_dashed_line_scroll:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    
+    mov si, cx
+    mov di, [scroll_offset]
+    
+    mov bx, 0
+.column_loop:
+    mov cx, si
+    add cx, bx
+    
+    mov dx, 0
+.dash_loop:
+    mov ax, dx
+    sub ax, di
+    
+.mod_loop:
+    cmp ax, 0
+    jge .check_upper
+    add ax, 40
+    jmp .mod_loop
+.check_upper:
+    cmp ax, 40
+    jl .mod_done
+    sub ax, 40
+    jmp .check_upper
+.mod_done:
+    
+    cmp ax, 20
+    jge .skip_dash_pixel
+    
+    push cx
+    push dx
+    mov ah, 0Ch
+    mov al, 15
+    mov bh, 0
+    int 10h
+    pop dx
+    pop cx
+    jmp .pixel_done
+    
+.skip_dash_pixel:
+    push cx
+    push dx
+    mov ah, 0Ch
+    mov al, 8
+    mov bh, 0
+    int 10h
+    pop dx
+    pop cx
+
+.pixel_done:
+    inc dx
+    cmp dx, 200
+    jl .dash_loop
+    
+    inc bx
+    cmp bx, 5
+    jl .column_loop
+    
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+draw_left_trees:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    mov bx, 30
+    call draw_tree_left
+    mov bx, 80
+    call draw_tree_left
+    mov bx, 130
+    call draw_tree_left
+    mov bx, 180
+    call draw_tree_left
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+draw_right_trees:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    mov bx, 30
+    call draw_tree_right
+    mov bx, 80
+    call draw_tree_right
+    mov bx, 130
+    call draw_tree_right
+    mov bx, 180
+    call draw_tree_right
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+draw_tree_left:
+    push ax
+    push cx
+    push dx
+    push si
+    
+    mov dx, bx
+    sub dx, 8
+.tree_l_row:
+    mov si, 8
+.tree_l_col:
+    push cx
+    push dx
+    mov cx, si
+    mov ah, 0Ch
+    mov al, 2
+    mov bh, 0
+    int 10h
+    pop dx
+    pop cx
+    
+    inc si
+    cmp si, 22
+    jl .tree_l_col
+    
+    inc dx
+    mov ax, dx
+    sub ax, bx
+    cmp ax, 8
+    jl .tree_l_row
+    
+    pop si
+    pop dx
+    pop cx
+    pop ax
+    ret
+
+;--------------------------------------
+draw_tree_right:
+    push ax
+    push cx
+    push dx
+    push si
+    
+    mov dx, bx
+    sub dx, 8
+.tree_r_row:
+    mov si, 298
+.tree_r_col:
+    push cx
+    push dx
+    mov cx, si
+    mov ah, 0Ch
+    mov al, 2
+    mov bh, 0
+    int 10h
+    pop dx
+    pop cx
+    
+    inc si
+    cmp si, 312
+    jl .tree_r_col
+    
+    inc dx
+    mov ax, dx
+    sub ax, bx
+    cmp ax, 8
+    jl .tree_r_row
+    
+    pop si
+    pop dx
+    pop cx
+    pop ax
+    ret
+
+;--------------------------------------
+draw_pixel:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    mov ah, 0Ch
+    mov bh, 0
+    int 10h
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+; Draw player car (at bottom Y=199, draws from bottom UP)
+;--------------------------------------
+draw_player_car:
+    pusha
+
+    mov si, img_reed_car_large
+
+    mov bp, 199
+
+    mov di, 0
+.car_row_loop:
+    mov ax, [player_lane]
+    shl ax, 1
+    mov bx, ax
+    mov bx, [lane_positions + bx]
+
+    mov cx, 0
+.car_col_loop:
+    mov al, [si]
+
+    cmp al, 0
+    je .skip_car_pixel
+
+    pusha
+
+    mov cx, bx
+    mov dx, bp
+
+    call draw_pixel
+
+    popa
+
+.skip_car_pixel:
+    inc si
+    inc bx
+
+    inc cx
+    cmp cx, reed_car_large_width
+    jl .car_col_loop
+
+    dec bp
+
+    inc di
+    cmp di, reed_car_large_height
+    jl .car_row_loop
+
+    popa
+    ret
+
+;--------------------------------------
+; Draw enemy car (SMOOTH - only redraw when position significantly changes)
+;--------------------------------------
+draw_enemy_car:
+    pusha
+
+    mov si, img_blue_car_large
+
+    mov ax, [enemy_y]
+    add ax, blue_car_large_height
+    add ax, -1
+    mov bp, ax
+
+    mov di, 0
+.enemy_row_loop:
+    mov ax, [enemy_lane]
+    shl ax, 1
+    mov bx, ax
+    mov bx, [lane_positions + bx]
+
+    mov cx, 0
+.enemy_col_loop:
+    mov al, [si]
+
+    cmp al, 0
+    je .skip_enemy_pixel
+
+    pusha
+
+    mov cx, bx
+    mov dx, bp
+
+    call draw_pixel
+
+    popa
+
+.skip_enemy_pixel:
+    inc si
+    inc bx
+
+    inc cx
+    cmp cx, blue_car_large_width
+    jl .enemy_col_loop
+
+    dec bp
+
+    inc di
+    cmp di, blue_car_large_height
+    jl .enemy_row_loop
+
+    popa
+    ret
+
+;--------------------------------------
+erase_car_at_lane:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    mov ax, [player_lane]
+    shl ax, 1
+    mov bx, ax
+    mov bx, [lane_positions + bx]
+    
+    mov dx, 153
+    mov cx, 0
+.erase_row:
+    mov ax, bx
+    mov si, 0
+.erase_col:
+    push cx
+    push dx
+    push si
+    push ax
+    
+    mov cx, ax
+    mov ah, 0Ch
+    mov al, 8
+    mov bh, 0
+    int 10h
+    
+    pop ax
+    pop si
+    pop dx
+    pop cx
+    
+    inc ax
+    inc si
+    cmp si, reed_car_large_width
+    jl .erase_col
+    
+    inc dx
+    inc cx
+    cmp cx, reed_car_large_height
+    jl .erase_row
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------
+wait_for_retrace:
+    mov dx, 0x3DA
+.wait_v:
+    in al, dx
+    test al, 0x08
+    jnz .wait_v
+.wait_h:
+    in al, dx
+    test al, 0x08
+    jz .wait_h
+    ret
+
+;--------------------------------------
+; CAR SPRITE DATA
+;--------------------------------------
+reed_car_large_width EQU 34
+reed_car_large_height EQU 46
+
+img_reed_car_large:
+    DB 0, 0, 0, 0, 0, 226, 17, 17, 17, 17, 17, 17, 17, 17, 226, 226, 226, 226, 226, 226, 226, 17, 17, 17, 17, 17, 17, 17, 17, 226, 226, 0, 0, 0, 0, 0, 0, 226, 226, 226
+    DB 25, 226, 226, 153, 153, 153, 226, 153, 17, 17, 17, 17, 17, 17, 17, 153, 226, 226, 153, 153, 153, 226, 153, 226, 226, 226, 0, 0, 0, 0, 0, 17, 17, 25, 153, 226, 226, 17, 17, 17
+    DB 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 226, 153, 153, 153, 17, 0, 0, 0, 0, 0, 17, 17, 25, 226, 153, 153, 221, 153, 153, 153, 25, 25, 25, 25, 25
+    DB 25, 25, 25, 25, 153, 153, 153, 221, 221, 153, 226, 153, 153, 17, 0, 0, 0, 0, 0, 17, 17, 25, 226, 153, 153, 221, 153, 153, 153, 25, 25, 25, 25, 25, 25, 25, 25, 25, 153, 153
+    DB 153, 221, 221, 153, 226, 153, 153, 17, 0, 0, 0, 0, 0, 17, 17, 17, 153, 221, 221, 221, 17, 17, 17, 25, 25, 25, 25, 25, 25, 25, 25, 25, 17, 17, 17, 221, 221, 221, 153, 17
+    DB 17, 17, 0, 0, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17
+    DB 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 25, 28, 28, 28, 28, 28
+    DB 28, 25, 28, 28, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 28, 28, 25, 25, 25, 17, 17, 153, 25, 25, 153, 153, 153, 153, 226, 153, 153, 153, 153
+    DB 153, 153, 153, 153, 153, 153, 153, 153, 153, 153, 153, 226, 226, 153, 153, 153, 153, 25, 153, 153, 0, 0, 17, 17, 17, 17, 17, 17, 17, 226, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17
+    DB 17, 17, 17, 17, 17, 226, 226, 17, 17, 17, 17, 17, 17, 17, 0, 0, 17, 17, 17, 17, 17, 17, 17, 226, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 226
+    DB 226, 17, 17, 17, 17, 17, 17, 17, 0, 0, 0, 226, 226, 17, 153, 17, 17, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 17, 153, 17, 17, 226
+    DB 0, 0, 0, 0, 0, 17, 17, 226, 17, 226, 226, 17, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 17, 17, 226, 17, 153, 153, 17, 0, 0, 0, 0, 0, 17
+    DB 17, 226, 17, 226, 226, 17, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 17, 17, 226, 17, 153, 153, 17, 0, 0, 0, 0, 0, 17, 17, 226, 109, 153, 153, 17
+    DB 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 226, 109, 226, 226, 17, 0, 0, 0, 0, 0, 17, 17, 226, 109, 17, 17, 25, 28, 28, 28, 28, 28, 28
+    DB 25, 25, 28, 25, 25, 153, 153, 153, 25, 17, 17, 17, 109, 226, 226, 17, 0, 0, 0, 0, 0, 17, 17, 226, 109, 17, 17, 226, 226, 226, 226, 226, 226, 226, 39, 39, 39, 39, 39, 226
+    DB 226, 226, 226, 226, 226, 17, 109, 226, 226, 17, 0, 0, 0, 0, 0, 17, 17, 226, 109, 17, 17, 226, 226, 226, 226, 226, 226, 226, 39, 39, 39, 39, 39, 226, 226, 226, 226, 226, 226, 17
+    DB 109, 226, 226, 17, 0, 0, 0, 0, 0, 17, 17, 226, 109, 17, 17, 226, 226, 226, 226, 226, 226, 226, 39, 110, 39, 39, 39, 226, 226, 226, 226, 153, 153, 17, 109, 226, 226, 17, 0, 0
+    DB 0, 0, 0, 17, 17, 226, 109, 17, 17, 226, 226, 226, 226, 226, 226, 226, 39, 39, 39, 39, 39, 226, 226, 226, 226, 226, 226, 17, 109, 226, 226, 17, 0, 0, 0, 0, 0, 17, 17, 226
+    DB 109, 17, 17, 226, 226, 226, 226, 226, 226, 226, 39, 110, 39, 39, 39, 226, 226, 226, 226, 226, 226, 17, 109, 226, 226, 17, 0, 0, 0, 0, 0, 17, 17, 226, 109, 17, 17, 226, 226, 226
+    DB 226, 226, 226, 226, 39, 110, 39, 39, 39, 226, 226, 226, 226, 226, 226, 17, 109, 226, 226, 17, 0, 0, 0, 0, 0, 17, 17, 226, 109, 17, 17, 226, 226, 226, 226, 226, 226, 226, 39, 110
+    DB 39, 39, 39, 226, 226, 226, 226, 226, 226, 17, 109, 226, 226, 17, 0, 0, 0, 0, 0, 17, 17, 226, 109, 17, 17, 226, 153, 153, 226, 226, 226, 226, 110, 110, 39, 39, 39, 226, 226, 226
+    DB 226, 226, 226, 17, 109, 226, 226, 17, 0, 0, 0, 0, 0, 17, 17, 226, 109, 17, 17, 226, 153, 153, 226, 226, 226, 226, 110, 110, 39, 39, 39, 226, 226, 226, 226, 226, 226, 17, 109, 226
+    DB 226, 17, 0, 0, 0, 0, 0, 17, 17, 226, 109, 17, 17, 226, 153, 153, 153, 226, 226, 226, 110, 110, 110, 39, 39, 226, 226, 226, 226, 226, 226, 17, 109, 17, 17, 17, 0, 0, 0, 0
+    DB 0, 17, 17, 226, 109, 17, 17, 226, 153, 153, 153, 226, 226, 226, 110, 110, 110, 39, 39, 226, 226, 226, 226, 226, 226, 17, 109, 17, 17, 17, 0, 0, 0, 0, 17, 28, 28, 25, 17, 17
+    DB 17, 226, 153, 153, 153, 226, 226, 226, 110, 110, 110, 110, 110, 226, 226, 226, 226, 226, 226, 17, 17, 25, 25, 28, 17, 17, 0, 0, 17, 153, 153, 153, 226, 153, 153, 226, 153, 153, 153, 226
+    DB 226, 226, 110, 110, 110, 110, 110, 226, 226, 226, 226, 226, 226, 153, 226, 153, 153, 153, 17, 17, 0, 0, 17, 153, 153, 153, 226, 153, 153, 226, 153, 153, 153, 226, 226, 226, 110, 110, 110, 110
+    DB 110, 226, 226, 226, 226, 226, 226, 153, 226, 153, 153, 153, 17, 17, 0, 0, 226, 17, 17, 226, 226, 109, 109, 226, 226, 226, 226, 226, 226, 226, 39, 39, 39, 39, 39, 226, 226, 226, 226, 226
+    DB 226, 109, 226, 226, 226, 17, 226, 226, 0, 0, 0, 17, 17, 226, 226, 17, 17, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 109, 17, 226, 226, 226, 17
+    DB 0, 0, 0, 0, 0, 17, 17, 17, 226, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 226, 17, 17, 17, 0, 0, 0, 0, 0, 17
+    DB 17, 17, 226, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 226, 17, 17, 17, 0, 0, 0, 0, 0, 17, 17, 17, 226, 17, 17, 153
+    DB 25, 25, 25, 25, 25, 25, 153, 25, 25, 153, 153, 25, 25, 25, 153, 153, 153, 17, 226, 17, 17, 17, 0, 0, 0, 0, 0, 17, 17, 17, 153, 226, 226, 17, 226, 226, 226, 226, 226, 226
+    DB 39, 39, 39, 39, 39, 226, 226, 226, 226, 17, 17, 226, 153, 17, 17, 17, 0, 0, 0, 0, 0, 17, 17, 17, 153, 226, 226, 17, 226, 226, 226, 226, 226, 226, 39, 39, 39, 39, 39, 226
+    DB 226, 226, 226, 17, 17, 226, 153, 17, 17, 17, 0, 0, 0, 0, 0, 17, 17, 17, 153, 226, 226, 17, 226, 226, 153, 226, 226, 226, 39, 39, 39, 39, 39, 226, 226, 226, 226, 17, 17, 226
+    DB 153, 17, 17, 17, 0, 0, 0, 0, 0, 17, 17, 17, 153, 226, 226, 17, 226, 226, 226, 226, 226, 226, 39, 39, 39, 39, 39, 226, 226, 226, 226, 17, 17, 226, 153, 17, 17, 17, 0, 0
+    DB 0, 0, 0, 17, 17, 226, 153, 226, 226, 17, 226, 226, 153, 226, 226, 226, 39, 110, 39, 39, 39, 226, 226, 226, 226, 17, 17, 226, 153, 226, 226, 17, 0, 0, 0, 0, 0, 17, 17, 17
+    DB 153, 226, 226, 226, 153, 153, 153, 226, 226, 226, 39, 110, 110, 39, 39, 153, 226, 226, 226, 226, 226, 226, 153, 17, 17, 17, 0, 0, 0, 0, 0, 0, 0, 17, 42, 226, 226, 17, 226, 226
+    DB 153, 153, 226, 226, 39, 39, 39, 39, 39, 226, 226, 226, 226, 17, 17, 226, 42, 17, 17, 0, 0, 0, 0, 0, 0, 0, 0, 17, 42, 226, 226, 17, 226, 226, 153, 153, 226, 226, 39, 39
+    DB 39, 39, 39, 226, 226, 226, 226, 17, 17, 226, 42, 17, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 226, 66, 66, 42, 17, 17, 226, 226, 226, 226, 153, 153, 153, 153, 153, 226, 226, 226
+    DB 17, 42, 42, 66, 226, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 153, 153, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 153, 0, 0
+    DB 0, 0, 0, 0
+    
+;   NPC CAR SPRITE DATA 
+    blue_car_large_width EQU 35
+    blue_car_large_height EQU 46
+
+    img_blue_car_large:
+        DB 0, 0, 0, 0, 226, 226, 17, 17, 17, 17, 17, 17, 17, 17, 226, 226, 226, 226, 226, 226, 226, 17, 17, 17, 17, 17, 17, 17, 17, 226, 226, 0, 0, 0, 0, 0, 0, 0, 226, 226
+        DB 226, 25, 226, 226, 153, 153, 153, 226, 153, 17, 17, 17, 17, 17, 17, 17, 153, 226, 226, 153, 153, 153, 226, 153, 226, 226, 226, 0, 0, 0, 0, 0, 0, 17, 17, 25, 153, 226, 226, 17
+        DB 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 226, 153, 153, 153, 17, 0, 0, 0, 0, 0, 0, 17, 17, 25, 226, 153, 153, 137, 153, 153, 153, 25, 25
+        DB 25, 25, 25, 25, 25, 25, 25, 153, 153, 153, 137, 137, 153, 226, 153, 153, 17, 0, 0, 0, 0, 0, 0, 17, 17, 25, 226, 153, 153, 137, 153, 153, 153, 25, 25, 25, 25, 25, 25, 25
+        DB 25, 25, 153, 153, 153, 137, 137, 153, 226, 153, 153, 17, 0, 0, 0, 0, 0, 0, 17, 17, 17, 153, 12, 12, 137, 17, 17, 17, 25, 25, 25, 25, 25, 25, 25, 25, 25, 17, 17, 17
+        DB 137, 137, 12, 153, 17, 17, 17, 0, 0, 0, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17
+        DB 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17
+        DB 17, 17, 25, 28, 28, 28, 28, 28, 28, 25, 28, 28, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 28, 28, 25, 25, 25, 17, 17, 17, 153, 25, 25
+        DB 153, 153, 153, 153, 226, 153, 153, 153, 153, 153, 153, 153, 153, 153, 153, 153, 153, 153, 153, 153, 226, 226, 153, 153, 153, 153, 25, 153, 153, 17, 0, 0, 17, 17, 17, 17, 17, 17, 17, 226
+        DB 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 226, 226, 17, 17, 17, 17, 17, 17, 17, 0, 0, 0, 17, 17, 17, 17, 17, 17, 17, 226, 17, 17, 17, 17, 17
+        DB 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 226, 226, 17, 17, 17, 17, 17, 17, 17, 0, 0, 0, 0, 226, 226, 17, 153, 17, 17, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9
+        DB 9, 9, 9, 9, 9, 9, 9, 17, 153, 17, 17, 226, 0, 0, 0, 0, 0, 0, 17, 17, 226, 17, 226, 226, 17, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9
+        DB 17, 17, 226, 17, 153, 153, 17, 0, 0, 0, 0, 0, 0, 17, 17, 226, 17, 226, 226, 17, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 17, 17, 226, 17, 153
+        DB 153, 17, 0, 0, 0, 0, 0, 0, 17, 17, 226, 9, 153, 153, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 226, 9, 226, 226, 17, 0, 0, 0
+        DB 0, 0, 0, 17, 17, 226, 9, 17, 17, 25, 28, 28, 28, 28, 28, 28, 25, 25, 28, 25, 25, 153, 153, 153, 25, 17, 17, 17, 9, 226, 226, 17, 0, 0, 0, 0, 0, 0, 17, 17
+        DB 226, 9, 17, 17, 226, 226, 226, 226, 226, 226, 226, 146, 146, 146, 146, 146, 226, 226, 226, 226, 226, 226, 17, 9, 226, 226, 17, 0, 0, 0, 0, 0, 0, 17, 17, 226, 9, 17, 17, 226
+        DB 226, 226, 226, 226, 226, 226, 146, 146, 146, 146, 146, 226, 226, 226, 226, 226, 226, 17, 9, 226, 226, 17, 0, 0, 0, 0, 0, 0, 17, 17, 226, 9, 17, 17, 226, 226, 226, 226, 226, 226
+        DB 226, 146, 140, 146, 146, 146, 226, 226, 226, 226, 153, 153, 17, 9, 226, 226, 17, 0, 0, 0, 0, 0, 0, 17, 17, 226, 9, 17, 17, 226, 226, 226, 226, 226, 226, 226, 146, 146, 146, 146
+        DB 146, 226, 226, 226, 226, 226, 226, 17, 9, 226, 226, 17, 0, 0, 0, 0, 0, 0, 17, 17, 226, 9, 17, 17, 226, 226, 226, 226, 226, 226, 226, 146, 140, 146, 146, 146, 226, 226, 226, 226
+        DB 226, 226, 17, 9, 226, 226, 17, 0, 0, 0, 0, 0, 0, 17, 17, 226, 9, 17, 17, 226, 226, 226, 226, 226, 226, 226, 146, 140, 146, 146, 146, 226, 226, 226, 226, 226, 226, 17, 9, 226
+        DB 226, 17, 0, 0, 0, 0, 0, 0, 17, 17, 226, 9, 17, 17, 226, 226, 226, 226, 226, 226, 226, 146, 140, 146, 146, 146, 226, 226, 226, 226, 226, 226, 17, 9, 226, 226, 17, 0, 0, 0
+        DB 0, 0, 0, 17, 17, 226, 9, 17, 17, 226, 153, 153, 226, 226, 226, 226, 140, 140, 146, 146, 146, 226, 226, 226, 226, 226, 226, 17, 9, 226, 226, 17, 0, 0, 0, 0, 0, 0, 17, 17
+        DB 226, 9, 17, 17, 226, 153, 153, 226, 226, 226, 226, 140, 140, 146, 146, 146, 226, 226, 226, 226, 226, 226, 17, 9, 226, 226, 17, 0, 0, 0, 0, 0, 0, 17, 17, 226, 9, 17, 17, 226
+        DB 153, 153, 153, 226, 226, 226, 140, 140, 140, 146, 146, 226, 226, 226, 226, 226, 226, 17, 9, 17, 17, 17, 0, 0, 0, 0, 0, 0, 17, 17, 226, 9, 17, 17, 226, 153, 153, 153, 226, 226
+        DB 226, 140, 140, 140, 146, 146, 226, 226, 226, 226, 226, 226, 17, 9, 17, 17, 17, 0, 0, 0, 0, 0, 17, 28, 28, 25, 17, 17, 17, 226, 153, 153, 153, 226, 226, 226, 140, 140, 140, 140
+        DB 140, 226, 226, 226, 226, 226, 226, 17, 17, 25, 25, 28, 17, 17, 0, 0, 0, 17, 153, 153, 153, 226, 153, 153, 226, 153, 153, 153, 226, 226, 226, 140, 140, 140, 140, 140, 226, 226, 226, 226
+        DB 226, 226, 153, 226, 153, 153, 153, 17, 17, 0, 0, 0, 17, 153, 153, 153, 226, 153, 153, 226, 153, 153, 153, 226, 226, 226, 140, 140, 140, 140, 140, 226, 226, 226, 226, 226, 226, 153, 226, 153
+        DB 153, 153, 17, 17, 0, 0, 0, 226, 17, 17, 226, 226, 9, 9, 226, 226, 226, 226, 226, 226, 226, 146, 146, 146, 146, 146, 226, 226, 226, 226, 226, 226, 9, 226, 226, 226, 17, 226, 226, 0
+        DB 0, 0, 0, 17, 17, 226, 226, 17, 17, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 17, 226, 226, 226, 17, 0, 0, 0, 0, 0, 0, 17, 17
+        DB 17, 226, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 226, 17, 17, 17, 0, 0, 0, 0, 0, 0, 17, 17, 17, 226, 17, 17, 17
+        DB 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 226, 17, 17, 17, 0, 0, 0, 0, 0, 0, 17, 17, 17, 226, 17, 17, 153, 25, 25, 25, 25, 25
+        DB 25, 153, 25, 25, 153, 153, 25, 25, 25, 153, 153, 153, 17, 226, 17, 17, 17, 0, 0, 0, 0, 0, 0, 17, 17, 17, 153, 226, 226, 17, 226, 226, 226, 226, 226, 226, 146, 146, 146, 146
+        DB 146, 226, 226, 226, 226, 17, 17, 226, 153, 17, 17, 17, 0, 0, 0, 0, 0, 0, 17, 17, 17, 153, 226, 226, 17, 226, 226, 226, 226, 226, 226, 146, 146, 146, 146, 146, 226, 226, 226, 226
+        DB 17, 17, 226, 153, 17, 17, 17, 0, 0, 0, 0, 0, 0, 17, 17, 17, 153, 226, 226, 17, 226, 226, 153, 226, 226, 226, 146, 146, 146, 146, 146, 226, 226, 226, 226, 17, 17, 226, 153, 17
+        DB 17, 17, 0, 0, 0, 0, 0, 0, 17, 17, 17, 153, 226, 226, 17, 226, 226, 226, 226, 226, 226, 146, 146, 146, 146, 146, 226, 226, 226, 226, 17, 17, 226, 153, 17, 17, 17, 0, 0, 0
+        DB 0, 0, 0, 17, 17, 226, 153, 226, 226, 17, 226, 226, 153, 226, 226, 226, 146, 140, 146, 146, 146, 226, 226, 226, 226, 17, 17, 226, 153, 226, 226, 17, 0, 0, 0, 0, 0, 0, 17, 17
+        DB 17, 153, 226, 226, 226, 153, 153, 153, 226, 226, 226, 146, 140, 140, 146, 146, 153, 226, 226, 226, 226, 226, 226, 153, 17, 17, 17, 0, 0, 0, 0, 0, 0, 0, 0, 17, 42, 226, 226, 17
+        DB 226, 226, 153, 153, 226, 226, 146, 146, 146, 146, 146, 226, 226, 226, 226, 17, 17, 226, 42, 17, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 42, 226, 226, 17, 226, 226, 153, 153, 226
+        DB 226, 146, 146, 146, 146, 146, 226, 226, 226, 226, 17, 17, 226, 42, 17, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 226, 66, 66, 42, 17, 17, 226, 226, 226, 226, 153, 153, 153, 153
+        DB 153, 226, 226, 226, 17, 42, 42, 66, 226, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 153, 153, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17
+        DB 17, 17, 153, 0, 0, 0, 0, 0, 0, 0
